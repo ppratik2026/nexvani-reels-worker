@@ -183,7 +183,9 @@ def round_once() -> int:
                 # the website poster first; a poster failure never costs the reel
                 poster, credit = None, ""
                 try:
-                    poster, credit = make_poster(story, item, url, key, cfg.get("posterPhotos", True),
+                    # only the photo the website already chose: searching and checking again here would spend
+                    # the website's Gemini quota a second time
+                    poster, credit = make_poster(story, item, url, key, bool(item.get("photo")) and cfg.get("posterPhotos", True),
                                                  Path(tmp) / "poster.jpg")
                 except Exception as e:
                     print(f"   Poster failed: {e}", file=sys.stderr)
