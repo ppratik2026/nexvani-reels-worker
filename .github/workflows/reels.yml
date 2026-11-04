@@ -1,0 +1,76 @@
+name: Reels worker
+
+# Makes the website posters and the reels for NexVani Media's newly published stories (worker.py) and uploads them
+# to the website, which posts them everywhere. Public repository, so GitHub Actions minutes are free: it runs every
+# 30 minutes, and the website can also start it (workflow_dispatch). The website's code stays private; this repository
+# only draws posters and reels. The music tracks are not stored here: the worker downloads them from the website.
+# Needs repository secrets SITE_URL (public https URL of the English website) and REELS_SECRET (the same value as the
+# website's REELS_SECRET).
+on:
+  workflow_dispatch:
+    inputs:
+      site:
+        description: "Edition code (set by the website; informational)"
+        required: false
+        default: all
+      site_url:
+        description: "Only this website (empty = every language edition)"
+        required: false
+        default: ""
+  schedule:
+    - cron: "*/30 * * * *"
+
+concurrency:
+  group: reels-${{ inputs.site_url || inputs.site || 'all' }}
+  cancel-in-progress: false
+
+jobs:
+  reels:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install ffmpeg and fonts
+        timeout-minutes: 12
+        run: |
+          # every script's font for the language editions; Chinese/Japanese/Korean fonts only when such an edition exists
+          CJK=""
+          if curl -fsS -m 20 "${{ secrets.SITE_URL }}/api/editions" | grep -qE '"lang":"(zh|ja|ko)"'; then CJK=fonts-noto-cjk; fi
+          for try in 1 2 3; do
+            sudo timeout 150 apt-get update -o Acquire::Retries=3 &&
+              sudo timeout 300 apt-get install -y --no-install-recommends ffmpeg fonts-noto-color-emoji fonts-noto-core $CJK && break
+            echo "apt try $try failed, retrying"; sleep 15
+          done
+          command -v ffmpeg >/dev/null
+
+      - name: Install Python packages
+        run: |
+          pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Make and upload reels
+        env:
+          MAIN_SITE_URL: ${{ secrets.SITE_URL }}
+          ONLY_SITE: ${{ inputs.site_url }}
+          REELS_SECRET: ${{ secrets.REELS_SECRET }}
+          REELS_LIMIT: "10"
+        run: |
+          if [ -n "$ONLY_SITE" ]; then
+            sites="$ONLY_SITE"
+          else
+            sites=$(curl -fsS -m 20 "$MAIN_SITE_URL/api/editions" | python -c "import json,sys; print(' '.join(e['url'] for e in json.load(sys.stdin)['editions']))" || echo "$MAIN_SITE_URL")
+          fi
+          status=0
+          for url in $sites; do
+            echo "::group::$url"
+            SITE_URL="$url" python -u worker.py || status=1
+            echo "::endgroup::"
+          done
+          exit $status
