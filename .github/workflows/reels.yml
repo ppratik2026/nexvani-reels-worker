@@ -26,7 +26,8 @@ concurrency:
 
 jobs:
   reels:
-    runs-on: ubuntu-latest
+    # pinned: the newest image (26.04) could not reach its package mirror, so ffmpeg failed to install on every run
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
