@@ -46,7 +46,7 @@ jobs:
           if curl -fsS -m 20 "${{ secrets.SITE_URL }}/api/editions" | grep -qE '"lang":"(zh|ja|ko)"'; then CJK=fonts-noto-cjk; fi
           # one quick try at Ubuntu's mirror; when it is down (it has been), carry on without it instead of failing the run
           if sudo timeout 90 apt-get update -o Acquire::http::Timeout=15 -o Acquire::Retries=1; then
-            sudo timeout 240 apt-get install -y --no-install-recommends ffmpeg fonts-noto-color-emoji fonts-noto-core $CJK || echo "::warning::apt install failed; using fallbacks"
+            sudo timeout 240 apt-get install -y --no-install-recommends ffmpeg fonts-noto-color-emoji fonts-noto-core $CJK && echo "APT_OK=1" >> "$GITHUB_ENV" || echo "::warning::apt install failed; using fallbacks"
           else
             echo "::warning::Ubuntu package mirror unreachable; using fallbacks"
           fi
@@ -67,7 +67,8 @@ jobs:
         run: |
           pip install -r requirements.txt
           # Chromium's system libraries come from apt too; the runner image already has them, so skip that when apt is down
-          timeout 300 python -m playwright install --with-deps chromium || python -m playwright install chromium
+          if [ "$APT_OK" = 1 ]; then timeout 300 python -m playwright install --with-deps chromium || python -m playwright install chromium
+          else python -m playwright install chromium; fi
 
       - name: Make and upload reels
         env:
