@@ -39,22 +39,35 @@ jobs:
           cache-dependency-path: requirements.txt
 
       - name: Install ffmpeg and fonts
-        timeout-minutes: 12
+        timeout-minutes: 8
         run: |
           # every script's font for the language editions; Chinese/Japanese/Korean fonts only when such an edition exists
           CJK=""
           if curl -fsS -m 20 "${{ secrets.SITE_URL }}/api/editions" | grep -qE '"lang":"(zh|ja|ko)"'; then CJK=fonts-noto-cjk; fi
-          for try in 1 2 3; do
-            sudo timeout 150 apt-get update -o Acquire::Retries=3 &&
-              sudo timeout 300 apt-get install -y --no-install-recommends ffmpeg fonts-noto-color-emoji fonts-noto-core $CJK && break
-            echo "apt try $try failed, retrying"; sleep 15
-          done
-          command -v ffmpeg >/dev/null
+          # one quick try at Ubuntu's mirror; when it is down (it has been), carry on without it instead of failing the run
+          if sudo timeout 90 apt-get update -o Acquire::http::Timeout=15 -o Acquire::Retries=1; then
+            sudo timeout 240 apt-get install -y --no-install-recommends ffmpeg fonts-noto-color-emoji fonts-noto-core $CJK || echo "::warning::apt install failed; using fallbacks"
+          else
+            echo "::warning::Ubuntu package mirror unreachable; using fallbacks"
+          fi
+          # ffmpeg fallback: a static build from GitHub
+          if ! command -v ffmpeg >/dev/null; then
+            curl -fsSL -m 180 -o /tmp/ffmpeg.tar.xz https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz
+            tar -xJf /tmp/ffmpeg.tar.xz -C /tmp
+            sudo install -m 755 /tmp/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg /tmp/ffmpeg-master-latest-linux64-gpl/bin/ffprobe /usr/local/bin/
+          fi
+          # emoji font fallback (the brand fonts ship with this repository)
+          if ! fc-list | grep -qi "Noto Color Emoji"; then
+            mkdir -p ~/.local/share/fonts
+            curl -fsSL -m 60 -o ~/.local/share/fonts/NotoColorEmoji.ttf https://github.com/googlefonts/noto-emoji/raw/main/fonts/NotoColorEmoji.ttf && fc-cache -f >/dev/null || true
+          fi
+          ffmpeg -hide_banner -version | head -1
 
       - name: Install Python packages
         run: |
           pip install -r requirements.txt
-          python -m playwright install --with-deps chromium
+          # Chromium's system libraries come from apt too; the runner image already has them, so skip that when apt is down
+          timeout 300 python -m playwright install --with-deps chromium || python -m playwright install chromium
 
       - name: Make and upload reels
         env:
