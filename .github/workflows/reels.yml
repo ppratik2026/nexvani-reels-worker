@@ -85,7 +85,10 @@ jobs:
           status=0
           for url in $sites; do
             echo "::group::$url"
-            SITE_URL="$url" python -u worker.py || status=1
+            if ! SITE_URL="$url" python -u worker.py; then
+              # only the main website failing fails the run; another edition that is down (moved, deleted) is a warning
+              if [ "${url%/}" = "${MAIN_SITE_URL%/}" ] || [ -n "$ONLY_SITE" ]; then status=1; else echo "::warning::$url failed (edition down or moved); skipped"; fi
+            fi
             echo "::endgroup::"
           done
           exit $status
