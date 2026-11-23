@@ -39,14 +39,38 @@ def fetch_music() -> None:
         return
     url, key = site()
     try:
-        names = requests.get(f"{url}/api/reels/music", params={"key": key}, timeout=60).json().get("tracks", [])
+        names = site_get(f"{url}/api/reels/music", params={"key": key}, timeout=60).json().get("tracks", [])
         for name in names:
-            r = requests.get(f"{url}/api/reels/music", params={"key": key, "name": name}, timeout=120)
+            r = site_get(f"{url}/api/reels/music", params={"key": key, "name": name}, timeout=120)
             r.raise_for_status()
             (MUSIC_DIR / name).write_bytes(r.content)
         print(f"Music: {len(names)} tracks from the website")
     except Exception as e:   # reels then go out without music
         print(f"Music not loaded ({e}); reels without music", file=sys.stderr)
+
+
+class SiteBusy(Exception):
+    """The website (or its host's bot shield) is not answering the worker right now: try again next run."""
+
+
+def blocked(r: requests.Response) -> bool:
+    """The host's LiteSpeed shield answers busy-time server requests with a "Bot Verification" page (403)."""
+    return r.status_code in (403, 429, 502, 503, 504) and (r.status_code != 403 or "Bot Verification" in r.text[:2000])
+
+
+def site_get(url: str, *, tries: int = 3, **kw) -> requests.Response:
+    """GET from the website, waiting and trying again while it is busy or behind the bot shield."""
+    for attempt in range(tries):
+        try:
+            r = requests.get(url, **kw)
+            if not blocked(r):
+                return r
+            print(f"   Website busy or bot shield ({r.status_code}), waiting")
+        except (requests.ConnectionError, requests.Timeout) as e:
+            print(f"   Website not reachable ({type(e).__name__}), waiting")
+        if attempt < tries - 1:
+            time.sleep(20 * 2 ** attempt)
+    raise SiteBusy(url.split("?")[0])
 
 
 def post(url: str, *, tries: int = 4, **kw) -> requests.Response:
@@ -123,7 +147,7 @@ def poster_pass(minutes: float = 6) -> int:
     """Posters first: every recent story without a picture gets its poster (a few seconds each), before the
     slower reels. Uses the photo the website already found, else the drawn scene."""
     url, key = site()
-    res = requests.get(f"{url}/api/reels/queue", params={"key": key, "posters": "1", "limit": "40"}, timeout=60)
+    res = site_get(f"{url}/api/reels/queue", params={"key": key, "posters": "1", "limit": "40"}, timeout=60)
     res.raise_for_status()
     queue = res.json()
     cfg = queue.get("settings", {})
@@ -158,7 +182,7 @@ def round_once() -> int:
     url, key = site()
     # REELS_LIMIT: how many waiting stories one round takes (the website caps it at 10).
     limit = os.environ.get("REELS_LIMIT", "3")
-    res = requests.get(f"{url}/api/reels/queue", params={"key": key, "limit": limit}, timeout=60)
+    res = site_get(f"{url}/api/reels/queue", params={"key": key, "limit": limit}, timeout=60)
     res.raise_for_status()
     queue = res.json()
     cfg = queue.get("settings", {})
@@ -274,9 +298,16 @@ def main() -> None:
     if not args.loop:
         try:
             poster_pass()
+        except SiteBusy:
+            pass  # the reel round below says so once
         except Exception as e:
             print(f"Poster pass failed: {e}", file=sys.stderr)
-        round_once()
+        try:
+            round_once()
+        except SiteBusy as e:
+            # not a failure of the worker: the website is busy or its host shows a bot check; the next run (a few
+            # minutes later) picks the work up, so no failed run (and no failure email)
+            print(f"::warning::Website busy or behind its host's bot check ({e}); trying again on the next run")
         return
     end = time.time() + args.hours * 3600 if args.hours else None
     while end is None or time.time() < end:
