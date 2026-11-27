@@ -1,8 +1,8 @@
 name: Reels worker
 
 # Makes the website posters and the reels for NexVani Media's newly published stories (worker.py) and uploads them
-# to the website, which posts them everywhere. Public repository, so GitHub Actions minutes are free: it runs every
-# 30 minutes, and the website can also start it (workflow_dispatch). The website's code stays private; this repository
+# to the website, which posts them everywhere. It runs once an hour, and the website can also start it
+# (workflow_dispatch, at most every 30 minutes) so new stories don't wait long; GitHub Actions is used sparingly. The website's code stays private; this repository
 # only draws posters and reels. The music tracks are not stored here: the worker downloads them from the website.
 # Needs repository secrets SITE_URL (public https URL of the English website) and REELS_SECRET (the same value as the
 # website's REELS_SECRET).
@@ -18,7 +18,7 @@ on:
         required: false
         default: ""
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "17 * * * *"
 
 concurrency:
   group: reels-${{ inputs.site_url || inputs.site || 'all' }}
